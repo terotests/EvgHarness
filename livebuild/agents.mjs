@@ -1329,9 +1329,77 @@ export function sessionDir() {
   return path.join(os.tmpdir(), "evg-live-session");
 }
 
+// --- snapshots and undo --------------------------------------------------------
+//
+// An agent can throw a good screen away: it did, removing every card to
+// "rebuild cleanly" on the next ask. The document before every task, and
+// before every start-over, is kept in .undo/, and Undo puts the last one that
+// differs from the screen back.
+const UNDO = ".undo";
+const UNDO_KEEP = 30;
+
+export function snapshotSession() {
+  const dir = sessionDir();
+  const doc = path.join(dir, "doc.evg.json");
+  let text = "";
+  try {
+    text = fs.readFileSync(doc, "utf8");
+  } catch {
+    return;
+  }
+  if (!looksLikeEvg(text)) return;
+  const store = path.join(dir, UNDO);
+  fs.mkdirSync(store, { recursive: true });
+  const names = fs.readdirSync(store).filter((n) => n.endsWith(".evg.json")).sort();
+  if (names.length && fs.readFileSync(path.join(store, names.at(-1)), "utf8") === text) return;
+  fs.writeFileSync(path.join(store, `${String(Date.now()).padStart(15, "0")}.evg.json`), text);
+  for (const old of names.slice(0, Math.max(0, names.length + 1 - UNDO_KEEP))) {
+    fs.rmSync(path.join(store, old), { force: true });
+  }
+}
+
+// Put back the newest snapshot that differs from the screen; false when there
+// is none.
+export function undoSession() {
+  const dir = sessionDir();
+  const store = path.join(dir, UNDO);
+  const doc = path.join(dir, "doc.evg.json");
+  let now = "";
+  try {
+    now = fs.readFileSync(doc, "utf8");
+  } catch {
+    now = "";
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(store).filter((n) => n.endsWith(".evg.json")).sort();
+  } catch {
+    return false;
+  }
+  while (names.length) {
+    const last = path.join(store, names.pop());
+    const text = fs.readFileSync(last, "utf8");
+    fs.rmSync(last, { force: true });
+    if (text !== now && looksLikeEvg(text)) {
+      fs.writeFileSync(doc, text);
+      return true;
+    }
+  }
+  return false;
+}
+
+function docNodes(text) {
+  try {
+    return countNodes(JSON.parse(text).root);
+  } catch {
+    return 0;
+  }
+}
+
 export function resetSession(kind = "dashboard") {
   const dir = sessionDir();
   fs.mkdirSync(dir, { recursive: true });
+  snapshotSession();
   fs.writeFileSync(path.join(dir, "doc.evg.json"), seedDoc(kind));
   fs.writeFileSync(path.join(dir, "TASK.md"), "Seed: " + kind + "\n");
   // A seed chip is "start over", and the app was made from the document that
@@ -1419,7 +1487,7 @@ function followUpTask(task, docText) {
     "",
     stats,
     "",
-    "The outline is already on the phone. Continue it — do not start over. A plan without a tool call is not a finish.",
+    "The outline below is what is on the screen. Continue it — do not start over.",
     "",
     "Current outline:",
     ...lines.map((l) => "- " + l),
@@ -1802,6 +1870,7 @@ export async function runWorkspaceAgent({ id, kind, prompt, seed, session = fals
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
+        if (id === "cursor" || id === "claude" || id === "codex") rawLog(line);
         if (STREAM_JSON.has(id) && cursorFeed.feed(line)) continue;
         tokenize(line, onLine);
       }
@@ -1990,8 +2059,72 @@ export function runRecipeEdit(docPath, onLine, signal, prompt, kind, view = null
   });
 }
 
-export async function runTask({ agent, kind, prompt, seed, session = false, onLine, signal, view = null }) {
+// --- the run log ---------------------------------------------------------------
+//
+// Every session task leaves .runs/<time>-<agent>.ndjson: what was asked, and
+// every event the page saw except the frames (thoughts, tool lines, ops,
+// errors, usage). A CLI agent's raw stream-json — its tool inputs and
+// results — goes beside it as .raw.ndjson. The page's "Debug log" button
+// copies the last runs as one text (serve.mjs /debug).
+export const RUNS = ".runs";
+const RUNS_KEEP = 10;
+let activeRaw = "";
+
+function openRunLog(agent, prompt, view) {
+  const dir = path.join(sessionDir(), RUNS);
+  fs.mkdirSync(dir, { recursive: true });
+  const names = fs.readdirSync(dir).filter((n) => /\.ndjson$/.test(n) && !/\.raw\./.test(n)).sort();
+  for (const old of names.slice(0, Math.max(0, names.length + 1 - RUNS_KEEP))) {
+    fs.rmSync(path.join(dir, old), { force: true });
+    fs.rmSync(path.join(dir, old.replace(/\.ndjson$/, ".raw.ndjson")), { force: true });
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const file = path.join(dir, `${stamp}-${agent}.ndjson`);
+  fs.writeFileSync(file, `${JSON.stringify({ t: "run", agent, prompt, view, at: new Date().toISOString() })}\n`);
+  activeRaw = file.replace(/\.ndjson$/, ".raw.ndjson");
+  return (line) => {
+    if (/"t":"(frame|doc|token)"/.test(line)) return;
+    try {
+      fs.appendFileSync(file, `${String(line).trim()}\n`);
+    } catch {
+      /* the log is a convenience */
+    }
+  };
+}
+
+function rawLog(line) {
+  if (!activeRaw) return;
+  try {
+    fs.appendFileSync(activeRaw, `${line}\n`);
+  } catch {
+    /* the log is a convenience */
+  }
+}
+
+export async function runTask({ agent, kind, prompt, seed, session = false, onLine: emit, signal, view = null }) {
   const id = agent || "recipe";
+  const before = session ? readSessionDoc() : "";
+  const record = session ? openRunLog(id, prompt || "", view) : () => {};
+  const onLine = (line) => {
+    record(line);
+    emit(line);
+  };
+  if (session) snapshotSession();
+  try {
+    await runTaskInner({ id, kind, prompt, seed, session, onLine, signal, view });
+  } finally {
+    activeRaw = "";
+    // Say it when a task took most of the screen away, whoever did it.
+    const after = session ? readSessionDoc() : "";
+    const was = docNodes(before);
+    const is = docNodes(after);
+    if (session && was >= 8 && is * 2 < was) {
+      onLine(ndjson({ t: "error", text: `This task removed most of the screen (${was} → ${is} nodes). Undo brings back the screen from before it.` }));
+    }
+  }
+}
+
+async function runTaskInner({ id, kind, prompt, seed, session, onLine, signal, view }) {
   if (id === "recipe") {
     if (session) {
       const dir = prepareSession(prompt || "", { kind: kind || "dashboard" });

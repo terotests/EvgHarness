@@ -136,6 +136,10 @@ export function toolDeclarations(mode = "json") {
         properties: {
           ...opsParam,
           file: { type: "string", description: "Default doc.evg.json." },
+          replace: {
+            type: "boolean",
+            description: "Only when the task asks to throw the screen away and start over: allows a batch that removes most of it.",
+          },
         },
         required: [mode === "json" ? "ops" : "ops_json"],
       },
@@ -398,7 +402,8 @@ export function repairOps(input) {
         return;
       }
       const index = Number.isInteger(o.index) ? o.index : Number.isFinite(Number(o.index)) ? Number(o.index) : -1;
-      ops.push({ op: "insert", at: o.at, index, node: repairNode(node, notes, `op ${i}`) });
+      const built = repairNode(node, notes, `op ${i}`);
+      ops.push({ op: "insert", at: o.at, index, tag: built.tag, node: built });
       return;
     }
     if (o.op === "move") {
@@ -431,6 +436,46 @@ function childCount(doc, at) {
     n = n.children[Number(step)];
   }
   return n && Array.isArray(n.children) ? n.children.length : 0;
+}
+
+// --- a batch that throws the screen away -------------------------------------
+//
+// A real run built a decent screen and then, a turn later, removed 0/3, 0/2,
+// 0/1 and 0/0 to "rebuild it cleanly" — and did it again on the next ask.
+// Nothing in a follow-up means "start over", and the person watching loses
+// the screen they were pleased with. So a batch that removes most of the
+// document is refused unless the task itself asks for a new screen.
+
+export const START_OVER = /start(ing)? over|from scratch|new screen|replace (it|this|the screen)|clear (it|the screen)|\breset\b|\bwipe\b|blank (page|screen)|alusta|tyhjennä|tyhjaa|poista kaikki|uusi näkymä|korvaa (koko|näkymä)|kokonaan uusi/i;
+
+function nodeAtPath(doc, at) {
+  let n = doc && doc.root;
+  for (const step of String(at).split("/").slice(1)) {
+    if (!n || !Array.isArray(n.children)) return null;
+    n = n.children[Number(step)];
+  }
+  return n || null;
+}
+
+export function wipeCheck(workspace, file, ops, replace, task) {
+  const doc = readJson(path.join(workspace, file));
+  const total = nodeCount(doc && doc.root);
+  if (total < 8) return null;
+  let removed = 0;
+  for (const o of ops) {
+    if (o.op !== "remove") continue;
+    if (o.at === "0") return refuse(total, total, replace, task);
+    removed += nodeCount(nodeAtPath(doc, o.at));
+  }
+  return removed * 2 > total ? refuse(removed, total, replace, task) : null;
+}
+
+function refuse(removed, total, replace, task) {
+  if (replace && START_OVER.test(String(task || ""))) return null;
+  return {
+    error: `This batch removes ${removed} of the screen's ${total} nodes. The task does not ask to start over, so the screen stays.`,
+    hint: "Change what is there in place: set-text, set-prop, set-css, and insert what is missing. Remove only a node that is wrong, one at a time.",
+  };
 }
 
 // --- running the workspace tools ---------------------------------------------
@@ -610,6 +655,8 @@ export function executeTool(workspace, name, args, state) {
         if (error) return { ok: false, error };
         if (!ops.length) return { ok: false, error: "no ops to apply", repaired: notes };
         const file = safeRel(workspace, args.file);
+        const wipe = wipeCheck(workspace, file, ops, args.replace === true, state.task);
+        if (wipe) return { ok: false, applied: 0, ...wipe };
         const res = applyBatch(workspace, file, ops);
         if (res.ok) res.outline = outlineDoc(workspace, file).outline;
         if (notes.length) res.repaired = notes;
@@ -823,7 +870,7 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
     }
   })();
   const view = viewOf(task);
-  const state = { view, finishChecked: false };
+  const state = { view, finishChecked: false, task };
   const history = loadHistory(workspace);
 
   const earlier = history.runs.length
@@ -833,7 +880,7 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
   const pic = pictureParts(workspace);
   const first = [
     `${earlier}## Task\n${task}`,
-    `## The document now\n\`\`\`\n${outline.outline || outline.error}\n\`\`\``,
+    `## The document now\n\`\`\`\n${outline.outline || outline.error}\n\`\`\`\nThis is the screen the person is looking at. Keep what is there and change it in place; the host refuses a batch that removes most of it unless the task asks to start over.`,
     pic.text,
   ]
     .filter(Boolean)
@@ -847,14 +894,22 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
   let turns = 0;
   let summary = "";
 
-  const trace = (line) => {
-    log(line);
+  // The trace is the debug log's source: everything the model thought and
+  // every call with its arguments and result. `trace` also goes to the
+  // console; `traceOnly` is too long for it.
+  const traceOnly = (line) => {
     try {
       fs.appendFileSync(path.join(workspace, GEMINI_TRACE), `${line}\n`);
     } catch {
       /* gone */
     }
   };
+  const trace = (line) => {
+    log(line);
+    traceOnly(line);
+  };
+  traceOnly(`\n=== run ${new Date().toISOString()} · ${model} · max ${maxTurns} calls`);
+  traceOnly(`--- first message${pic.parts.length ? " (+ the screenshot)" : ""}\n${clip(first, 8000)}\n---`);
   const result = (subtype) => {
     const cost = costUsd(spend, env);
     onEvent({
@@ -881,7 +936,9 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
         // Gemini's thought SUMMARIES are prose about its own reasoning ("Okay,
         // here's the summary, formatted as requested"), not the reasoning, and
         // they buried the tool calls on the page. The model thinks either way.
-        thinkingConfig: { includeThoughts: env.EVG_GEMINI_THOUGHTS === "1" },
+        // Requested always for the debug log; shown on the page only with
+        // EVG_GEMINI_THOUGHTS=1.
+        thinkingConfig: { includeThoughts: true },
         ...(env.EVG_GEMINI_TEMPERATURE ? { temperature: Number(env.EVG_GEMINI_TEMPERATURE) } : {}),
       },
     };
@@ -927,8 +984,14 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
     for (const p of parts) {
       if (p.functionCall) calls.push(p.functionCall);
       else if (p.text) {
-        if (p.thought) trace(`think: ${p.text.replace(/\s+/g, " ").slice(0, 600)}`);
-        onEvent({ type: "assistant", message: { content: [{ text: p.text }] } });
+        if (p.thought) {
+          traceOnly(`think: ${p.text.replace(/\s+/g, " ").slice(0, 4000)}`);
+          log(`think: ${p.text.replace(/\s+/g, " ").slice(0, 300)}`);
+          if (env.EVG_GEMINI_THOUGHTS === "1") onEvent({ type: "assistant", message: { content: [{ text: p.text }] } });
+        } else {
+          trace(`say: ${p.text.replace(/\s+/g, " ").slice(0, 2000)}`);
+          onEvent({ type: "assistant", message: { content: [{ text: p.text }] } });
+        }
       }
     }
     if (!calls.length) {
@@ -954,6 +1017,8 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
       }
       const line = summarize(fc.name, args, res);
       trace(`→ ${line}`);
+      traceOnly(`   args ${clip(JSON.stringify(args), 6000)}`);
+      traceOnly(`   result ${clip(JSON.stringify({ ...res, outline: res.outline ? `(${String(res.outline).split("\n").length} lines)` : undefined }), 3000)}`);
       onEvent({ type: "tool_call", subtype: "started", tool_call: { shellToolCall: { args: { command: line } } } });
       const fr = { name: fc.name, response: res };
       if (fc.id) fr.id = fc.id;

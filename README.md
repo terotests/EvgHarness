@@ -75,6 +75,8 @@ says so rather than touching it.
 - **Picture** attaches a screenshot to the next ask.
 - **Run** turns the screen into an app: tabs with `nav.<state>` ids become
   states, and a press moves between them.
+- **Undo** brings back the screen from before the last task; **Debug log**
+  copies what the agent was asked, thought and ran, for a bug report.
 - **Save / Saved…** keep designs under `~/.evg-livebuild/saved/`, **Export**
   copies one `.ranger.json` (ui tree, CSS, state machine).
 

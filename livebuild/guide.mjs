@@ -135,6 +135,10 @@ have, build from divs and spans — but never a fake control.
 - Every pressable thing gets an \`id\`: tabs \`nav.<screen>\`, buttons and
   rows \`<verb>.<thing>\` (\`open.invoice\`, \`toggle.wifi\`). An app is made
   from these ids later; a nameless button can never be wired.
+- Icons are monochrome and take the palette: a symbol in the text's colour
+  (\`← → › ✓ ✕ ⌂ ⌕ ☰ ⚙ ★ ♥ ⚑ ⏻ ↻ ⋯\`), or an SVG path node coloured with
+  \`fill\`: \`{"tag":"path","props":{"width":"20px","height":"20px","view-box":"0 0 24 24","d":"M3 11 L12 3 L21 11 L21 21 L3 21 Z","fill":"#94a3b8"}}\`.
+  No colour emoji (📱 🔔 👋): they ignore the palette and read as clip art.
 - Real words. Every label is text a person would read on this screen, with
   normal spacing — no lorem ipsum, no placeholders.
 - Edit the document that is there. Start over only when the task says so.

@@ -13,8 +13,8 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { runTask, resetSession, sessionDir } from "./agents.mjs";
-import { geminiLoop, normalizeFlags, repairOps, toolDeclarations } from "./gemini-agent.mjs";
+import { runTask, resetSession, sessionDir, snapshotSession, undoSession } from "./agents.mjs";
+import { geminiLoop, normalizeFlags, repairOps, toolDeclarations, wipeCheck } from "./gemini-agent.mjs";
 
 const assert = (ok, what) => {
   if (!ok) throw new Error(what);
@@ -50,6 +50,24 @@ const assert = (ok, what) => {
   assert(!/\| tiles \|/.test(bare) && /\| card \|/.test(bare), "the kit table lists only the pieces the kit has");
   assert(/ignores a document's `theme`/.test(bare), "an engine without themes is said so");
   console.log(`  repair      ${notes.length} repairs: shorthands, set-id, insert fields, dropped props; flags as argv`);
+}
+
+// --- a batch that would throw the screen away, and Undo ----------------------
+{
+  resetSession("dashboard");
+  const dir = sessionDir();
+  const file = path.join(dir, "doc.evg.json");
+  const before = fs.readFileSync(file, "utf8");
+  const kids = JSON.parse(before).root.children;
+  const removeAll = kids.map((_, i) => ({ op: "remove", at: `0/${kids.length - 1 - i}` }));
+  assert(wipeCheck(dir, "doc.evg.json", removeAll, false, "add a row"), "a batch removing every card must be refused");
+  assert(wipeCheck(dir, "doc.evg.json", removeAll, true, "add a row"), "replace: true without a start-over ask is still refused");
+  assert(!wipeCheck(dir, "doc.evg.json", removeAll, true, "Aloita alusta: tee kokonaan uusi näkymä"), "a task that asks to start over may");
+  assert(!wipeCheck(dir, "doc.evg.json", [removeAll[0]], false, "tidy"), "removing one card is fine");
+  snapshotSession();
+  fs.writeFileSync(file, JSON.stringify({ evg: 1, root: { tag: "div", props: { width: "390px", height: "844px" } } }));
+  assert(undoSession() && fs.readFileSync(file, "utf8") === before, "Undo puts the screen back");
+  console.log("  wipe/undo   removing most of the screen is refused unless asked; Undo restores the snapshot");
 }
 
 // --- a whole run through the orchestrator ------------------------------------------

@@ -129,8 +129,8 @@ const taskMd = fs.readFileSync(path.join(sessionDir(), "TASK.md"), "utf8");
 if (!/Follow-up/.test(taskMd) || !/nodes/.test(taskMd)) {
   throw new Error("follow-up TASK.md did not describe the live phone");
 }
-if (!/plan without a tool/.test(taskMd)) {
-  throw new Error("follow-up TASK.md must say a plan is not a finish: " + taskMd.slice(0, 400));
+if (!/do not start over/.test(taskMd)) {
+  throw new Error("follow-up TASK.md must say to continue the screen: " + taskMd.slice(0, 400));
 }
 const recipeFollow = [];
 await runTask({
@@ -544,6 +544,7 @@ if (!cursor.available) {
     ["the prompt field is disabled, not just its button", /\$\("prompt"\)\.disabled = !canEdit;/],
     ["start-over chips follow canEdit", /for \(const b of \$\("chips"\)/],
     ["reset follows canEdit", /\$\("reset"\)\.disabled = !canEdit;/],
+    ["undo follows canEdit", /\$\("undo"\)\.disabled = !canEdit;/],
     // Not `!idle`: leaving Run has to stay possible while in Run.
     ["Run is blocked while working and not while running", /\$\("run"\)\.disabled = working;/],
     ["the spinner is the working phase", /spin\(working\);/],

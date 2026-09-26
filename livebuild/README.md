@@ -83,6 +83,18 @@ Cursor and Claude run as local CLIs in the session workspace with
 `--continue`. Gemini has no CLI: `gemini-agent.mjs` talks to the Gemini API
 itself.
 
+## When an agent goes wrong
+
+- **Undo** puts back the screen from before the last task (or start-over).
+  The session keeps the last 30 in `.undo/`, and the page says so when a
+  task removed most of the screen.
+- **Debug log** copies the last three runs as one text: what was asked, the
+  events the page saw (thoughts, tool lines, ops, errors, usage), a CLI
+  agent's own stream-json (its tool inputs and results), Gemini's full trace
+  (its thoughts and every call's arguments and result), `TASK.md`, and the
+  document's outline and measure. `GET /debug?n=5` is the same text. The runs
+  are kept in the session's `.runs/`.
+
 ## How Gemini is driven
 
 - **Every turn is a tool call.** Requests set
@@ -98,6 +110,10 @@ itself.
   `flex-grow`, `children` on an insert becomes its `node`, `set-prop id` becomes
   `set-id`, and unsupported cosmetics (`box-shadow`, `z-index`, …) are dropped.
   The tool result lists each repair, so the model sees what changed.
+- **A batch that removes most of the screen is refused** unless the task
+  asks to start over (`start over`, `alusta`, `tyhjennä`, …) and the call says
+  `replace: true`. A real run removed every card to "rebuild cleanly" on the
+  next ask.
 - **`finish` is checked once.** An empty screen or open `measure` findings
   come back as `problems`; a second `finish` is accepted.
 - **Short system prompt.** It is the same quick start `AGENTS.md` opens with
@@ -133,7 +149,7 @@ itself.
 | `EVG_GEMINI_MAX_TURNS` | 40 | model calls per task |
 | `EVG_GEMINI_MAX_OUTPUT` | 32768 | output tokens per call |
 | `EVG_GEMINI_TEMPERATURE` | model default | |
-| `EVG_GEMINI_THOUGHTS` | off | `1` streams Gemini's thought summaries to the page |
+| `EVG_GEMINI_THOUGHTS` | off | `1` streams Gemini's thought summaries to the page (the debug log has them either way) |
 | `EVG_GEMINI_INPUT_PER_M` / `_CACHE_PER_M` / `_OUTPUT_PER_M` | 0.75 / 0.075 / 3.75 | the about-cost on the page |
 | `GEMINI_API_BASE` | public v1beta | |
 

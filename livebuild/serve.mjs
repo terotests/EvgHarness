@@ -22,6 +22,8 @@ import {
   frameFixture,
   seedDoc,
   resetSession,
+  undoSession,
+  RUNS,
   prepareSession,
   readSessionDoc,
   writeSessionDoc,
@@ -34,6 +36,8 @@ import {
   root as repoRoot,
 } from "./agents.mjs";
 import { exportSession } from "./export.mjs";
+import { capabilities } from "./capabilities.mjs";
+import { GEMINI_TRACE } from "./gemini-agent.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 import { root } from "./paths.mjs";
@@ -233,6 +237,90 @@ function pickKind(chip, prompt) {
   const c = String(chip || "").toLowerCase().trim();
   if (KINDS.has(c)) return c;
   return lastKind || "dashboard";
+}
+
+
+function gitHead(dir) {
+  const r = spawnSync("git", ["-C", dir, "log", "-1", "--format=%h %s"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "(not a git checkout)";
+}
+
+function clipText(text, cap) {
+  const t = String(text || "");
+  return t.length > cap ? `${t.slice(0, cap)} … (${t.length - cap} more)` : t;
+}
+
+function opLine(o) {
+  if (!o || typeof o !== "object") return String(o);
+  if (o.op === "set-css") return `set-css (${String(o.value || "").length} chars)`;
+  if (o.op === "insert") {
+    const n = o.node || {};
+    return `insert ${(n.props && n.props["class-name"]) || n.tag || o.tag || "node"} @ ${o.at}[${o.index ?? ""}]${n.text ? ` "${clipText(n.text, 40)}"` : ""}`;
+  }
+  if (o.op === "set-prop") return `set-prop ${o.at} ${o.prop}=${clipText(o.value, 60)}`;
+  if (o.op === "move") return `move ${o.at} → ${o.to}[${o.index}]`;
+  return `${o.op} ${o.at}${o.value != null ? ` ${clipText(JSON.stringify(o.value), 60)}` : ""}`;
+}
+
+function debugLog(n) {
+  const dir = sessionDir();
+  const out = [];
+  const caps = capabilities();
+  out.push("# EVG live-build debug log", "");
+  out.push(`generated   ${new Date().toISOString()}`);
+  out.push(`harness     ${gitHead(here)}`);
+  out.push(`ranger      ${gitHead(root)}  (${root})`);
+  out.push(`kit pieces  ${caps.pieces.join(", ")}`);
+  out.push(`theme       ${caps.theme ? "applies" : "IGNORED by this Ranger"}`);
+  out.push(`agent       default ${DEFAULT_AGENT}; gemini model ${process.env.EVG_GEMINI_MODEL || "gemini-3.8-flash"}`);
+  const runsDir = path.join(dir, RUNS);
+  const runs = fs.existsSync(runsDir)
+    ? fs.readdirSync(runsDir).filter((f) => f.endsWith(".ndjson") && !f.includes(".raw.")).sort().slice(-n)
+    : [];
+  out.push("", `## The last ${runs.length} run(s)`);
+  for (const f of runs) {
+    out.push("", `### ${f}`);
+    for (const line of fs.readFileSync(path.join(runsDir, f), "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (e.t === "run") out.push(`asked: ${e.prompt}`);
+      else if (e.t === "think") out.push(`  think  ${clipText(e.text, 3000)}`);
+      else if (e.t === "ops") out.push(...(e.ops || []).map((o) => `  op     ${opLine(o)}`));
+      else if (e.t === "error") out.push(`  ERROR  ${clipText(e.text, 2000)}`);
+      else if (e.t === "measure") out.push(`  layout ${e.count} finding(s)${e.findings && e.findings.length ? `: ${e.findings.slice(0, 4).join("; ")}` : ""}`);
+      else if (e.t === "usage") out.push(`  usage  ${JSON.stringify(e)}`);
+      else if (e.t === "done") out.push(`  done   ok=${e.ok} agent=${e.agent || ""}`);
+    }
+    const raw = path.join(runsDir, f.replace(/\.ndjson$/, ".raw.ndjson"));
+    if (fs.existsSync(raw)) {
+      const lines = fs.readFileSync(raw, "utf8").split("\n").filter(Boolean);
+      out.push(`  --- the CLI's own stream (${lines.length} events, last 150, each clipped)`);
+      out.push(...lines.slice(-150).map((l) => `  ${clipText(l, 1200)}`));
+    }
+  }
+  const trace = path.join(dir, GEMINI_TRACE);
+  if (fs.existsSync(trace)) {
+    const parts = fs.readFileSync(trace, "utf8").split("\n=== run ");
+    out.push("", `## Gemini trace (last ${Math.min(n, parts.length - 1)} run(s): thoughts, every call's arguments and result)`);
+    out.push(...parts.slice(-n).filter((p) => p.trim()).map((p) => `=== run ${clipText(p, 60000)}`));
+  }
+  const task = path.join(dir, "TASK.md");
+  if (fs.existsSync(task)) out.push("", "## TASK.md", fs.readFileSync(task, "utf8"));
+  const docFile = path.join(dir, "doc.evg.json");
+  if (fs.existsSync(docFile)) {
+    const agentJs = path.join(root, "lib/evg/bin/evg_agent.js");
+    const r = spawnSync(process.execPath, [agentJs, "outline", docFile], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+    out.push("", "## The document now (outline)", clipText(r.stdout || r.stderr, 20000));
+    const events = frameDocument(docFile);
+    const m = events.find((e) => e && e.t === "measure");
+    if (m) out.push("", "## measure", JSON.stringify(m, null, 1).slice(0, 4000));
+  }
+  return `${out.join("\n")}\n`;
 }
 
 function send(res, status, type, body) {
@@ -865,6 +953,42 @@ function main() {
       // screen can be looked at as a phone, a tablet on its side or a
       // desktop. It never reaches the file.
       const events = frameDocument(file, viewportOf(url));
+      const frame = events.find((e) => e && e.t === "frame") || {};
+      send(
+        res,
+        200,
+        "application/json; charset=utf-8",
+        JSON.stringify({
+          kind: lastKind,
+          width: frame.width || 390,
+          height: frame.height || 844,
+          ncmds: frame.ncmds || 0,
+          added: 0,
+          nodes: frame.nodes || 0,
+          list: frame.list || { cmds: [] },
+          measure: events.find((e) => e && e.t === "measure") || null,
+        }),
+      );
+      return;
+    }
+    // THE DEBUG LOG: the last runs as one text to paste into a bug report or
+    // hand to an agent — what was asked, what the agent thought, every call
+    // it made and what came back, and the document as it stands.
+    if (url.pathname === "/debug") {
+      try {
+        send(res, 200, "text/plain; charset=utf-8", debugLog(Math.min(10, Math.max(1, Number(url.searchParams.get("n")) || 3))));
+      } catch (e) {
+        send(res, 500, "text/plain; charset=utf-8", String(e.stack || e));
+      }
+      return;
+    }
+    if (url.pathname === "/undo" && req.method === "POST") {
+      if (!undoSession()) {
+        send(res, 200, "application/json; charset=utf-8", JSON.stringify({ error: "nothing to undo" }));
+        return;
+      }
+      lastDoc = readSessionDoc() || lastDoc;
+      const events = frameDocument(path.join(sessionDir(), "doc.evg.json"), viewportOf(url));
       const frame = events.find((e) => e && e.t === "frame") || {};
       send(
         res,

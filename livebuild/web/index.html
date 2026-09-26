@@ -286,6 +286,8 @@
   <span class="lbl">Keep</span>
   <button type="button" class="chip" id="save" title="Save this phone — the document and its app — so it survives the next start over">Save</button>
   <button type="button" class="chip" id="export" title="Copy this screen as one Ranger UI JSON document — paste it into Ranger or an agent prompt">Export</button>
+  <button type="button" class="chip" id="debuglog" title="Copy the last runs as text: what was asked, what the agent thought, every call it made and what came back">Debug log</button>
+  <button type="button" class="chip" id="undo" title="Put back the screen from before the last task or start-over">Undo</button>
   <button type="button" class="chip" id="reset" title="Empty the project: a blank canvas, and the app that was built from this screen thrown away">Reset</button>
   <select id="saved" class="chip" title="Open a saved design back into this session">
     <option value="">Saved…</option>
@@ -449,6 +451,38 @@ $("reset").addEventListener("click", async () => {
   }
   await loadSeed("empty");
   note("Empty project. Describe a screen and press Follow up.");
+});
+
+// DEBUG LOG: the last three runs as one text, on the clipboard. Works in every
+// phase — the moment something goes wrong is the moment to copy it.
+$("debuglog").addEventListener("click", async () => {
+  const text = await (await fetch("/debug?n=3")).text();
+  try {
+    await navigator.clipboard.writeText(text);
+    note(`Debug log copied (${Math.round(text.length / 1024)} KB): the last runs, thoughts, calls and results.`);
+  } catch {
+    // No clipboard (a non-local address, or permission refused): a file instead.
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    a.download = "evg-livebuild-debug.txt";
+    a.click();
+    note("The clipboard is not available here, so the debug log was downloaded instead.");
+  }
+});
+
+// UNDO: the screen from before the last task or start-over.
+$("undo").addEventListener("click", async () => {
+  if (uiPhase !== "idle" || runMode) return;
+  const v = viewport();
+  const d = await (await fetch(`/undo?w=${v.w}&h=${v.h}`, { method: "POST" })).json();
+  if (d.error) {
+    note(d.error);
+    return;
+  }
+  paintFrame(d);
+  paintMeasure(d.measure);
+  $("added").textContent = "undo";
+  note("Back to the screen from before the last task.");
 });
 
 // SAVING, AND GETTING IT BACK.
@@ -672,6 +706,8 @@ function setPhase(phase) {
   $("saved").disabled = !idle;
   $("reset").disabled = !canEdit;
   $("reset").classList.toggle("off", !canEdit);
+  $("undo").disabled = !canEdit;
+  $("undo").classList.toggle("off", !canEdit);
 
   // Run is a different screen, so it cannot be entered mid-build. Leaving it
   // must stay possible, which is why this is not simply `disabled = !idle`.
@@ -929,7 +965,7 @@ function start(keepPicture) {
       const el = document.createElement("span");
       el.className = "op " + op.op;
       el.textContent = op.op === "insert"
-        ? `${op.op} ${op.tag} @ ${op.at}`
+        ? `${op.op} ${op.tag || (op.node && ((op.node.props && op.node.props["class-name"]) || op.node.tag)) || "node"} @ ${op.at}`
         : op.op === "set-text"
           ? `${op.op} @ ${op.at}`
           : `${op.op} ${op.prop || ""} @ ${op.at}`;
