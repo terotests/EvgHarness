@@ -1,0 +1,4 @@
+{
+  "ranger": { "url": "https://github.com/terotests/Ranger", "ref": "master" },
+  "erazer": { "url": "https://github.com/terotests/Erazer", "ref": "" }
+}

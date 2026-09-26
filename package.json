@@ -1,0 +1,23 @@
+{
+  "name": "evg-harness",
+  "version": "0.1.0",
+  "description": "EVG live build: an agent (Gemini, Cursor, Claude Code, \u2026) designs an application screen while the page paints it",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "start": "node scripts/start.mjs",
+    "start:gemini": "node scripts/start.mjs --agent=gemini",
+    "start:cursor": "node scripts/start.mjs --agent=cursor",
+    "start:claude": "node scripts/start.mjs --agent=claude",
+    "start:recipe": "node scripts/start.mjs --agent=recipe",
+    "check": "node scripts/check.mjs",
+    "check:web": "node scripts/check.mjs --web"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}
