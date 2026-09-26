@@ -24,7 +24,9 @@ export function viewOf(task) {
 
 // `tools` names the verbs as this agent calls them: shell commands for a CLI
 // agent, function names for Gemini.
-export function quickStart(view = { name: "phone", width: 390, height: 844 }, tools = SHELL_TOOLS) {
+// `caps` is what the linked Ranger can do (capabilities.mjs): the kit pieces
+// it has, and whether a document's theme switches the kit's colours.
+export function quickStart(view = { name: "phone", width: 390, height: 844 }, tools = SHELL_TOOLS, caps = null) {
   const { width: W, height: H, name } = view;
   const measure = tools.measure.replace(/\bW\b/, String(W)).replace(/\bH\b/, String(H));
   return `## What you are building
@@ -99,25 +101,9 @@ ${tools.patchIntro}
 
 ${tools.kitIntro}
 
-| piece | what it is | example flags |
-| --- | --- | --- |
-| appbar | top bar: back, title, action | \`--title "Orders"\` |
-| tabbar | bottom nav | \`--tab "Home|⌂|nav.home" --tab "Search|⌕|nav.search" --active nav.home\` |
-| card | a settings list of rows | \`--title "NETWORK" --row "Wi-Fi|Home-5G|switch:on" --row "Privacy||chevron"\` |
-| row | one settings row | \`--title "Dark mode" --control switch --id toggle.dark --bind dark\` |
-| tiles | 2×2 metric tiles | \`--tile "Revenue|$12.4k|+8% this week|$"\` (label|value|sub|icon) |
-| bars | trend card with a bar chart | \`--title "Orders" --value "1,284" --badge "+12%" --bar "M|55" --bar "T|80|#60a5fa"\` |
-| banner | highlight strip | \`--eyebrow "New" --title "Invoices are live" --sub "Send one today"\` |
-| pills | segmented Day/Week/Month | \`--pill Day --pill Week --pill Month --active Week\` |
-| chips | round actions | \`--chip "Share|↗|net.share" --chip "Forget|✕|net.forget"\` |
-| actions | row of buttons | \`--button "Pay now|primary|invoice.pay" --button "Later|secondary|invoice.later"\` |
-| field | labelled text field | \`--label "Email" --placeholder "you@example.com" --id field.email\` |
+${pieceTable(caps)}
 
-The pieces are light by default. On a dark screen, set the root's theme —
-\`{"op":"set-prop","at":"0","prop":"theme","value":"dark"}\` — and the kit's
-\`.theme-dark\` rules restyle every piece. Scope your own rules the same way
-(\`.theme-dark .card { … }\`); a descendant selector works only as
-\`.theme-<name> .class\`.
+${themeNote(caps)}
 
 Controls (switch, checkbox, slider, select, tabs, input, button, …) are in
 the kit too: ${tools.kitList}. A switch drawn from a rounded box and a circle
@@ -153,6 +139,43 @@ have, build from divs and spans — but never a fake control.
   normal spacing — no lorem ipsum, no placeholders.
 - Edit the document that is there. Start over only when the task says so.
 `;
+}
+
+
+const PIECE_ROWS = [
+  ["appbar", "| appbar | top bar: back, title, action | `--title \"Orders\"` |"],
+  ["tabbar", "| tabbar | bottom nav | `--tab \"Home|⌂|nav.home\" --tab \"Search|⌕|nav.search\" --active nav.home` |"],
+  ["card", "| card | a settings list of rows | `--title \"NETWORK\" --row \"Wi-Fi|Home-5G|switch:on\" --row \"Privacy||chevron\"` |"],
+  ["row", "| row | one settings row | `--title \"Dark mode\" --control switch --id toggle.dark --bind dark` |"],
+  ["tiles", "| tiles | 2×2 metric tiles | `--tile \"Revenue|$12.4k|+8% this week|$\"` (label|value|sub|icon) |"],
+  ["bars", "| bars | trend card with a bar chart | `--title \"Orders\" --value \"1,284\" --badge \"+12%\" --bar \"M|55\" --bar \"T|80|#60a5fa\"` |"],
+  ["banner", "| banner | highlight strip | `--eyebrow \"New\" --title \"Invoices are live\" --sub \"Send one today\"` |"],
+  ["pills", "| pills | segmented Day/Week/Month | `--pill Day --pill Week --pill Month --active Week` |"],
+  ["chips", "| chips | round actions | `--chip \"Share|↗|net.share\" --chip \"Forget|✕|net.forget\"` |"],
+  ["actions", "| actions | row of buttons | `--button \"Pay now|primary|invoice.pay\" --button \"Later|secondary|invoice.later\"` |"],
+  ["field", "| field | labelled text field | `--label \"Email\" --placeholder \"you@example.com\" --id field.email` |"],
+];
+
+function pieceTable(caps) {
+  const have = caps && Array.isArray(caps.pieces) && caps.pieces.length ? new Set(caps.pieces) : null;
+  const rows = PIECE_ROWS.filter(([name]) => !have || have.has(name)).map(([, row]) => row);
+  return ["| piece | what it is | example flags |", "| --- | --- | --- |", ...rows].join("\n");
+}
+
+function themeNote(caps) {
+  if (!caps || caps.theme) {
+    return `The pieces are light by default. On a dark screen, set the root's theme —
+\`{"op":"set-prop","at":"0","prop":"theme","value":"dark"}\` — and the kit's
+\`.theme-dark\` rules restyle every piece. Scope your own rules the same way
+(\`.theme-dark .card { … }\`); a descendant selector works only as
+\`.theme-<name> .class\`.`;
+  }
+  return `The pieces are light by default: dark text on white. This Ranger checkout
+ignores a document's \`theme\`, so \`theme: dark\` changes nothing. On a dark
+screen, restyle the pieces in the stylesheet: their parts have classes
+(\`.ui-row-title\`, \`.ui-appbar-title\`, \`.ui-card\` — kit_spec / \`./evg-ui spec\`
+lists them), so \`.ui-row-title { color: #f8fafc }\` is the whole job. Text you
+cannot read on its background is the first thing to check.`;
 }
 
 export const SHELL_TOOLS = {

@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import { quickStart, viewOf } from "./guide.mjs";
 import { root } from "./paths.mjs";
 import { ERAZER_TXT } from "./picture.mjs";
+import { capabilities } from "./capabilities.mjs";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 export const DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -82,7 +83,13 @@ export function geminiRates(env = process.env) {
 
 // --- the tools -----------------------------------------------------------------
 
-const PIECES = ["appbar", "tabbar", "card", "row", "tiles", "bars", "banner", "pills", "chips", "actions", "field"];
+const ALL_PIECES = ["appbar", "tabbar", "card", "row", "tiles", "bars", "banner", "pills", "chips", "actions", "field"];
+// Only what the linked kit really has: an enum naming a piece that is not
+// there is a promise the first call breaks.
+function pieces() {
+  const have = capabilities().pieces;
+  return have.length ? ALL_PIECES.filter((p) => have.includes(p)) : ALL_PIECES;
+}
 const OPS = ["set-prop", "set-text", "set-id", "set-css", "insert", "remove", "move"];
 
 const OP_SCHEMA = {
@@ -139,7 +146,7 @@ export function toolDeclarations(mode = "json") {
       {
         type: "object",
         properties: {
-          piece: { type: "string", enum: PIECES },
+          piece: { type: "string", enum: pieces() },
           flags: {
             type: "array",
             items: { type: "string" },
@@ -151,7 +158,7 @@ export function toolDeclarations(mode = "json") {
         required: ["piece"],
       },
     ),
-    decl("kit_spec", "Without a name: every piece and control in the kit. With a name: its flags and classes.", {
+    decl("kit_spec", "Without a name: every piece's flags and classes, and the list of controls, in one answer. With a name: that one.", {
       type: "object",
       properties: { name: { type: "string" } },
     }),
@@ -185,20 +192,24 @@ export function toolDeclarations(mode = "json") {
   ];
 }
 
-export function systemPrompt(view) {
+export function systemPrompt(view, maxTurns = DEFAULT_MAX_TURNS) {
   return `You are designing an application screen in an EVG document. You act only through the tools; every reply is a tool call. The run ends when you call finish.
 
-${quickStart(view, GEMINI_TOOLS_TEXT)}
+${quickStart(view, GEMINI_TOOLS_TEXT, capabilities())}
 ## When a screenshot is attached
 
 It is a reference, not the result. Its pixels are in the first message, and so is Erazer's reading of it: one line per widget, nested by containment, with position, size, fill, label, font size, text colour and radius. Rebuild that structure with the rules above — rows and columns, kit pieces where they fit, the screenshot's colours and words — scaled to this screen.
 
 ## How to work
 
-- Start with outline (unless the first message already shows it).
-- Make each apply_ops batch one coherent section: a header, one card, a list. Ten to forty ops is a good size.
-- Read every tool result. It says what was applied, what the host repaired, and what measure found. Fix findings before moving on.
-- Do not repeat a call whose answer you already have.
+You have ${maxTurns} tool calls for the whole task, and every result says how many are left. Spend them on edits.
+
+- The first message already has the task, the document's outline and any screenshot. Do not call outline or kit_spec to look around: the table above is the kit.
+- Build in big steps. The first version of the screen is one to three calls — an apply_ops batch can carry the whole structure and the stylesheet (fifty ops is fine), and add_piece adds a finished piece.
+- Every apply_ops and add_piece result already contains the new outline and the layout findings. Do not follow an edit with outline or measure; read the result and make the next edit.
+- Change what is there in place — set-text, set-prop, set-css. Do not remove a piece and add it again.
+- Fix findings before moving on. Do not repeat a call whose answer you already have.
+- When the screen has everything the task asked for and no findings, call finish.
 - The full reference is AGENTS.md (read_file) — only when something here is not enough.`;
 }
 
@@ -545,7 +556,7 @@ function kit(workspace, argv) {
 
 function addPiece(workspace, args) {
   const piece = String(args.piece || "").trim();
-  if (!PIECES.includes(piece)) return { ok: false, error: `piece is one of ${PIECES.join(", ")}` };
+  if (!pieces().includes(piece)) return { ok: false, error: `piece is one of ${pieces().join(", ")}` };
   const argv = ["add", piece, ...normalizeFlags(args.flags), "--into", "doc.evg.json"];
   if (args.at) argv.push("--at", String(args.at));
   if (Number.isInteger(args.index)) argv.push("--index", String(args.index));
@@ -558,7 +569,8 @@ function addPiece(workspace, args) {
   if (res.ok) {
     res.added = piece;
     res.classes = j.classes;
-    res.hint = "Restyle it through its classes in the stylesheet (set-css); outline shows where it landed.";
+    res.hint = "Restyle it through its classes in the stylesheet (set-css).";
+    res.outline = outlineDoc(workspace, "doc.evg.json").outline;
   }
   return res;
 }
@@ -597,15 +609,25 @@ export function executeTool(workspace, name, args, state) {
         const { ops, notes, error } = repairOps(args.ops ?? args.ops_json);
         if (error) return { ok: false, error };
         if (!ops.length) return { ok: false, error: "no ops to apply", repaired: notes };
-        const res = applyBatch(workspace, safeRel(workspace, args.file), ops);
+        const file = safeRel(workspace, args.file);
+        const res = applyBatch(workspace, file, ops);
+        if (res.ok) res.outline = outlineDoc(workspace, file).outline;
         if (notes.length) res.repaired = notes;
         return res;
       }
       case "add_piece":
         return addPiece(workspace, args);
       case "kit_spec": {
-        const r = kit(workspace, args.name ? ["spec", String(args.name)] : ["list"]);
-        return { out: clip(r.stdout || r.stderr, 6000) };
+        if (args.name) {
+          const r = kit(workspace, ["spec", String(args.name)]);
+          return { out: clip(r.stdout || r.stderr, 6000) };
+        }
+        // One answer instead of a call per piece: the run this replaced
+        // spent seven turns asking for them one at a time.
+        const specs = pieces().map((p) => (kit(workspace, ["spec", p]).stdout || "").trim());
+        const list = kit(workspace, ["list"]).stdout || "";
+        const controls = list.slice(list.indexOf("CONTROLS"));
+        return { out: clip(`${specs.join("\n\n")}\n\n${controls}`, 14000) };
       }
       case "measure":
         return measureDoc(workspace, safeRel(workspace, args.file), view, args);
@@ -850,13 +872,16 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
   while (turns < maxTurns) {
     if (signal && signal.aborted) throw new Error("aborted");
     const body = {
-      systemInstruction: { parts: [{ text: systemPrompt(view) }] },
+      systemInstruction: { parts: [{ text: systemPrompt(view, maxTurns) }] },
       contents: compact(contents),
       tools: [{ functionDeclarations: toolDeclarations(mode) }],
       toolConfig: { functionCallingConfig: { mode: "ANY" } },
       generationConfig: {
         maxOutputTokens: Number(env.EVG_GEMINI_MAX_OUTPUT) || 32768,
-        thinkingConfig: { includeThoughts: true },
+        // Gemini's thought SUMMARIES are prose about its own reasoning ("Okay,
+        // here's the summary, formatted as requested"), not the reasoning, and
+        // they buried the tool calls on the page. The model thinks either way.
+        thinkingConfig: { includeThoughts: env.EVG_GEMINI_THOUGHTS === "1" },
         ...(env.EVG_GEMINI_TEMPERATURE ? { temperature: Number(env.EVG_GEMINI_TEMPERATURE) } : {}),
       },
     };
@@ -918,6 +943,11 @@ export async function geminiLoop({ workspace, onEvent, env = process.env, fetchI
       const sig = `${fc.name}:${JSON.stringify(args)}`;
       lastCalls.push(sig);
       const res = executeTool(workspace, fc.name, args, state);
+      const left = maxTurns - turns;
+      res.turnsLeft = left;
+      if (left <= 5 && fc.name !== "finish") {
+        res.budget = `Only ${left} calls left. Put everything that is still missing into one batch, then call finish.`;
+      }
       const repeats = lastCalls.slice(-4).filter((s) => s === sig).length;
       if (repeats >= 3 && fc.name !== "finish") {
         res.note = `This is the same call ${repeats} times in a row; its answer will not change. Take the next step.`;

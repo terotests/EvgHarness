@@ -20,7 +20,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseRestyle, restyleEnv } from "./restyle.mjs";
 import { ERAZER_TXT, PICTURE_FILES, readScreenshot } from "./picture.mjs";
-import { quickStart, viewOf } from "./guide.mjs";
+import { SHELL_TOOLS, quickStart, viewOf } from "./guide.mjs";
+import { capabilities } from "./capabilities.mjs";
 import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_HISTORY,
@@ -674,7 +675,7 @@ after every save.
 
 ${task}
 
-${quickStart(viewOf(task))}
+${quickStart(viewOf(task), SHELL_TOOLS, capabilities())}
 # Reference
 
 Everything below is detail for when the quick start is not enough.

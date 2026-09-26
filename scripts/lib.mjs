@@ -54,7 +54,11 @@ function ensureRepo({ name, envVar, url, ref }) {
   } else if (process.argv.includes("--update") && isOurs(dir)) {
     log(`update ${name} (${wantRef || "default branch"})`);
     git(["fetch", "--depth", "1", "origin", wantRef || "HEAD"], dir);
-    git(["checkout", "-q", "--detach", "FETCH_HEAD"], dir);
+    // The clone is the harness's own, and an older one tracks files the
+    // link replaced (gallery/evg/livebuild), which a plain checkout refuses
+    // to overwrite. Nothing in it is anybody's work, so take the fetched
+    // tree as it is; the links are put back right after.
+    git(["checkout", "-q", "-f", "--detach", "FETCH_HEAD"], dir);
   }
   return dir;
 }
@@ -137,6 +141,20 @@ function compile(ranger, tool) {
     const fail = text.split("\n").filter((l) => /\[FAIL\]|FAILED|error/i.test(l)).slice(0, 30);
     throw new Error(`compile ${tool.src} failed:\n${fail.join("\n") || text.slice(-1500)}`);
   }
+}
+
+// A Ranger older than the harness: say what is missing and how to get it.
+export async function warnMissing(ranger) {
+  process.env.RANGER_ROOT = ranger;
+  const { capabilities } = await import("../livebuild/capabilities.mjs");
+  const caps = capabilities();
+  const want = ["tabbar", "tiles", "bars", "banner", "pills"].filter((p) => !caps.pieces.includes(p));
+  const lines = [];
+  if (want.length) lines.push(`the UI kit has no ${want.join(", ")}`);
+  if (!caps.theme) lines.push("a document's theme is ignored (kit pieces stay light on a dark screen)");
+  if (!lines.length) return;
+  log(`note   this Ranger checkout is older than the harness: ${lines.join("; ")}.`);
+  log(`       ${ranger.startsWith(depsDir) ? "npm run setup -- --update" : "update your Ranger checkout (git pull)"} fixes it. Agents are told what is missing meanwhile.`);
 }
 
 export function buildTools(ranger, { force = false } = {}) {

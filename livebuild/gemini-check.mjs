@@ -45,6 +45,10 @@ const assert = (ok, what) => {
   assert(JSON.stringify(flags) === JSON.stringify(["--title", "Orders", "--tile", "Revenue|$12k|+8%|$", "--bar", "M|55", "--bar", "T|80"]), `flags: ${flags}`);
   assert(toolDeclarations("json").every((d) => d.parametersJsonSchema), "json tools use parametersJsonSchema");
   assert(toolDeclarations("string").find((d) => d.name === "apply_ops").parameters.properties.ops_json, "string tools carry ops_json");
+  const { quickStart } = await import("./guide.mjs");
+  const bare = quickStart(undefined, undefined, { pieces: ["row", "card"], theme: false });
+  assert(!/\| tiles \|/.test(bare) && /\| card \|/.test(bare), "the kit table lists only the pieces the kit has");
+  assert(/ignores a document's `theme`/.test(bare), "an engine without themes is said so");
   console.log(`  repair      ${notes.length} repairs: shorthands, set-id, insert fields, dropped props; flags as argv`);
 }
 
@@ -82,6 +86,7 @@ const script = [
     const r = req.contents.at(-1).parts[0].functionResponse.response;
     assert(r.ok && r.applied >= 6, `apply_ops: ${JSON.stringify(r)}`);
     assert(r.repaired && r.repaired.length, "repairs are reported to the model");
+    assert(/Northwind/.test(r.outline || "") && r.turnsLeft > 0, "an edit answers with the new outline and the turns left");
     return call("add_piece", { piece: "tiles", flags: ['--tile "Revenue|$12.4k|+8%|$"', "--tile", "Orders|1,284|this week|#"] });
   },
   (req) => {

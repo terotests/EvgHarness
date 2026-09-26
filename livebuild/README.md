@@ -105,6 +105,16 @@ itself.
   one example screen.
 - **Default temperature.** Gemini 3 is meant to run at its default; lowering
   it can cause loops.
+- **Big steps, a visible budget.** Every `apply_ops` / `add_piece` result
+  carries the new outline and the layout findings, so an edit is never
+  followed by an `outline` + `measure` round trip, and every result says
+  how many calls are left. `kit_spec` with no name answers with every
+  piece's flags at once.
+- **The guide matches the checkout.** `capabilities.mjs` asks the linked
+  Ranger which kit pieces it has and whether a document's `theme` works;
+  the quick start (for every agent) and Gemini's `add_piece` list only
+  what is there, and say how to restyle for a dark screen when themes do
+  not work. `npm start` warns when Ranger is older than the harness.
 - **A picture comes in the first message:** the pixels, the palette, and
   Erazer's widget outline (below).
 - **Follow-up memory is small:** `.gemini-history.json` keeps each earlier
@@ -123,6 +133,7 @@ itself.
 | `EVG_GEMINI_MAX_TURNS` | 40 | model calls per task |
 | `EVG_GEMINI_MAX_OUTPUT` | 32768 | output tokens per call |
 | `EVG_GEMINI_TEMPERATURE` | model default | |
+| `EVG_GEMINI_THOUGHTS` | off | `1` streams Gemini's thought summaries to the page |
 | `EVG_GEMINI_INPUT_PER_M` / `_CACHE_PER_M` / `_OUTPUT_PER_M` | 0.75 / 0.075 / 3.75 | the about-cost on the page |
 | `GEMINI_API_BASE` | public v1beta | |
 
@@ -518,6 +529,7 @@ one, so the UI can say "+12" without walking the list.
 | `guide.mjs` | the quick start: AGENTS.md opens with it, Gemini's system prompt is built from it |
 | `picture.mjs` | an attached screenshot read by Erazer (+ Tesseract) into `attachment.erazer.txt` |
 | `paths.mjs` | where the Ranger checkout is |
+| `capabilities.mjs` | which kit pieces the linked Ranger has, and whether `theme` works |
 | `/attach` in `serve.mjs` | a picture in, traced; `lib/evg/tools/evg_image_tool.rgr` does the tracing |
 | `restyle.mjs` | recipe follow-ups: colour / size / radius from the ask |
 | `agents-check.mjs` | orchestrator: recipe, mock workspace, self slot |

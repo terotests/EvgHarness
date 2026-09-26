@@ -42,7 +42,7 @@ Claude, then the recipe. The page's agent row switches between all of them.
 ```sh
 npm run start:gemini           # or start:cursor, start:claude, start:recipe
 npm start -- --port=9000
-npm run setup -- --update      # pull newer Ranger / Erazer into .deps
+npm run setup -- --update      # pull newer Ranger / Erazer into .deps, rebuild the tools
 npm run setup -- --rebuild     # recompile every tool
 ```
 

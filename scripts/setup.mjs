@@ -6,11 +6,12 @@
  * the tools a session needs. `npm start` runs this first, so it is only worth
  * calling by hand to update the dependencies or force a rebuild.
  */
-import { buildTools, ensureDeps, log } from "./lib.mjs";
+import { warnMissing, buildTools, ensureDeps, log } from "./lib.mjs";
 
 try {
   const { ranger, erazer } = ensureDeps();
-  buildTools(ranger, { force: process.argv.includes("--rebuild") });
+  buildTools(ranger, { force: process.argv.includes("--rebuild") || process.argv.includes("--update") });
+  await warnMissing(ranger);
   log(`ready  Ranger ${ranger}`);
   log(`       Erazer ${erazer}`);
 } catch (e) {

@@ -9,7 +9,7 @@
  */
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { buildTools, detectAgents, ensureDeps, liveDir, log, pickAgent } from "./lib.mjs";
+import { warnMissing, buildTools, detectAgents, ensureDeps, liveDir, log, pickAgent } from "./lib.mjs";
 
 const arg = (name) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -19,7 +19,8 @@ const arg = (name) => {
 let ranger;
 try {
   ({ ranger } = ensureDeps());
-  buildTools(ranger, { force: process.argv.includes("--rebuild") });
+  buildTools(ranger, { force: process.argv.includes("--rebuild") || process.argv.includes("--update") });
+  await warnMissing(ranger);
 } catch (e) {
   log(`setup failed: ${e.message}`);
   process.exit(1);
