@@ -354,6 +354,12 @@ export function repairOps(input) {
         notes.push(`op ${i}: set-prop text → set-text`);
         return;
       }
+      const themed = /^theme-([\w-]+)$/.exec(String(o.value || "").trim());
+      if (name === "class-name" && themed) {
+        ops.push({ op: "set-prop", at: o.at, prop: "theme", value: themed[1] });
+        notes.push(`op ${i}: class-name ${o.value} → theme ${themed[1]} (what .theme-${themed[1]} rules match)`);
+        return;
+      }
       if (!name && o.props && typeof o.props === "object") {
         for (const [k, v] of Object.entries(o.props)) {
           for (const [pk, pv] of repairProp(k, v, notes)) ops.push({ op: "set-prop", at: o.at, prop: pk, value: pv });

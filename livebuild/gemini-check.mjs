@@ -29,15 +29,17 @@ const assert = (ok, what) => {
     { op: "insert", at: "0", tag: "div", props: { class: "card", flex: "1" }, children: [{ tag: "span", text: "Hi" }] },
     { op: "insert", at: "0", node: { tag: "button", text: "Pay", props: { backgroundColor: "#2563eb", borderRadius: 8 } } },
     { op: "delete", at: "0/3" },
+    { op: "set-prop", at: "0", prop: "class-name", value: "theme-dark" },
   ]);
-  const props = ops.filter((o) => o.op === "set-prop").map((o) => `${o.prop}=${o.value}`);
+  const props = ops.filter((o) => o.op === "set-prop" && /^padding/.test(o.prop)).map((o) => `${o.prop}=${o.value}`);
   assert(props.join(",") === "padding-top=12px,padding-right=16px,padding-bottom=12px,padding-left=16px", `padding: ${props}`);
   assert(ops.some((o) => o.op === "set-id" && o.value === "open.orders"), "set-prop id did not become set-id");
   const inserts = ops.filter((o) => o.op === "insert");
   assert(inserts[0].node.props["class-name"] === "card" && inserts[0].node.props["flex-grow"] === "1", "insert fields not moved into node");
   assert(inserts[0].node.children[0].text === "Hi", "children lost");
   assert(inserts[1].node.tag === "span" && inserts[1].node.props["border-radius"] === "8px", "button node not repaired");
-  assert(ops.at(-1).op === "remove", "delete is remove");
+  assert(ops.at(-2).op === "remove", "delete is remove");
+  assert(ops.at(-1).prop === "theme" && ops.at(-1).value === "dark", "class-name theme-dark is the theme");
   assert(notes.some((n) => /box-shadow dropped/.test(n)), "a dropped property must be reported");
   const flags = normalizeFlags(['--title "Orders"', "--tile", "Revenue|$12k|+8%|$", '--bar "M|55" --bar "T|80"']);
   assert(JSON.stringify(flags) === JSON.stringify(["--title", "Orders", "--tile", "Revenue|$12k|+8%|$", "--bar", "M|55", "--bar", "T|80"]), `flags: ${flags}`);

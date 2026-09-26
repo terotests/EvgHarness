@@ -113,6 +113,12 @@ ${tools.kitIntro}
 | actions | row of buttons | \`--button "Pay now|primary|invoice.pay" --button "Later|secondary|invoice.later"\` |
 | field | labelled text field | \`--label "Email" --placeholder "you@example.com" --id field.email\` |
 
+The pieces are light by default. On a dark screen, set the root's theme —
+\`{"op":"set-prop","at":"0","prop":"theme","value":"dark"}\` — and the kit's
+\`.theme-dark\` rules restyle every piece. Scope your own rules the same way
+(\`.theme-dark .card { … }\`); a descendant selector works only as
+\`.theme-<name> .class\`.
+
 Controls (switch, checkbox, slider, select, tabs, input, button, …) are in
 the kit too: ${tools.kitList}. A switch drawn from a rounded box and a circle
 looks right and does nothing; the kit's one works. What the kit does not
