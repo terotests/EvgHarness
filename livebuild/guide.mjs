@@ -74,7 +74,35 @@ line-height text-align white-space overflow · class-name.
 \`text-transform\`, \`text-decoration\`, \`font-style\`, \`align-self\`,
 \`row-gap\`, \`box-sizing\`. Write the long forms; leave the rest out.
 
-## The edits
+## Layout recipes (checked against this engine)
+
+\`\`\`css
+.screen { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; padding-bottom: 16px; padding-left: 16px; padding-right: 16px }
+.bar    { display: flex; flex-direction: row; justify-content: space-between; align-items: center; height: 44px }
+.card   { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; padding-bottom: 12px; padding-left: 16px; padding-right: 16px; border-radius: 14px }
+.item   { display: flex; flex-direction: row; align-items: center; gap: 12px; min-height: 48px }
+.icon   { display: flex; justify-content: center; align-items: center; width: 32px; height: 32px; border-radius: 8px }
+.grow   { display: flex; flex-direction: column; flex-grow: 1; gap: 2px }
+.two    { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.fill   { flex-grow: 1 }
+.tabs   { display: grid; grid-template-columns: 1fr 1fr 1fr; height: 56px }
+.tab    { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px }
+\`\`\`
+
+- A header is a \`.bar\`: title left, action right.
+- A list row is an \`.item\`: \`.icon\` | \`.grow\` (title over subtitle) | the
+  trailing value, chevron or switch. The middle grows, so every row's trailing
+  part lines up on the right edge.
+- Two cards side by side are \`.two\`; a tab bar is \`.tabs\` with one \`.tab\`
+  per entry (icon over label, centred).
+- To keep a tab bar at the bottom, put a \`.fill\` between the content and it.
+- Centre with \`justify-content\` / \`align-items\` on the parent, not with
+  padding or margins you compute. Text belongs in a \`span\`; a \`div\` with
+  text instead of children does not centre or wrap like one.
+- The page draws the phone around the screen: do not draw a status bar, a
+  clock, a notch or a home indicator.
+
+## The edits## The edits
 
 ${tools.patchIntro}
 
@@ -91,7 +119,7 @@ ${tools.patchIntro}
 - \`insert\` puts \`node\` (a whole subtree, document shape) into the parent
   \`at\`, before child number \`index\`. To add under an empty root, \`at\` is
   \`"0"\`.
-- \`set-css\` replaces the whole stylesheet: send every rule each time.
+- ${tools.cssNote || SHELL_TOOLS.cssNote}
   Class selectors, \`:hover\`, \`:active\`, \`:disabled\` and media queries
   work; \`#id\` selectors do not.
 - \`id\` is not a property. Use \`set-id\`, or \`"id"\` on an inserted node.
@@ -104,6 +132,12 @@ ${tools.kitIntro}
 ${pieceTable(caps)}
 
 ${themeNote(caps)}
+
+A control's look comes from its STATE classes: \`.ui-switch-track\` is the
+switch when it is off, \`.ui-switch-track-state-checked\` when it is on (the
+thumb likewise). Recolour those — \`.ui-switch-track-state-checked {
+background-color: #34c759 }\` — and never give the base class the "on" look,
+or the switch shows on whatever its state is.
 
 Controls (switch, checkbox, slider, select, tabs, input, button, …) are in
 the kit too: ${tools.kitList}. A switch drawn from a rounded box and a circle
@@ -188,6 +222,7 @@ export const SHELL_TOOLS = {
   kitIntro:
     "`./evg-ui add <piece> [flags] --into doc.evg.json > add.json` writes a batch that inserts a finished, styled piece (with `--at PATH --index N` to choose where); `./evg-agent patch doc.evg.json add.json` applies it. `./evg-ui spec <piece>` lists its flags.",
   kitList: "`./evg-ui list`",
+  cssNote: "`set-css` replaces the whole stylesheet: send every rule each time.",
   outline: "`./evg-agent outline doc.evg.json`",
   measure: "`./evg-agent measure doc.evg.json --width=W --height=H`",
   finish: "Stop when the outline shows every part of the ask and measure has no findings. Say in one or two sentences what you built.",

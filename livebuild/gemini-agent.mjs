@@ -101,9 +101,13 @@ const OP_SCHEMA = {
     value: { type: "string", description: "set-prop / set-text / set-id / set-css: the new value." },
     index: { type: "integer", description: "insert / move: position among the parent's children." },
     to: { type: "string", description: "move: the new parent." },
+    replace: { type: "boolean", description: "set-css only: replace the whole sheet instead of merging by selector." },
+    // A JSON STRING, not an object. A free-form object in a function
+    // declaration reaches Gemini with no properties to generate, and it sent
+    // `node: {}` on every insert of a real run — fourteen turns of empty divs.
     node: {
-      type: "object",
-      description: 'insert: the subtree, document shape: {"tag":"div","id":"…","props":{…},"children":[{"tag":"span","text":"…"}]}',
+      type: "string",
+      description: 'insert: the subtree as JSON text, document shape: {"tag":"div","id":"…","props":{"class-name":"card"},"children":[{"tag":"span","text":"Hi"}]}',
     },
   },
   required: ["op"],
@@ -219,6 +223,8 @@ You have ${maxTurns} tool calls for the whole task, and every result says how ma
 
 const GEMINI_TOOLS_TEXT = {
   patchIntro: "Call apply_ops with the batch. The answer carries the layout findings.",
+  cssNote:
+    "\`set-css\` MERGES by selector: a rule you send replaces the rule with the same selector and every other rule stays, the kit's included. Send only what you change (\`replace: true\` on the op replaces the whole sheet).",
   kitIntro:
     "add_piece inserts a finished, styled piece with its stylesheet rules, and applies it: add_piece(piece, flags, at, index). kit_spec(name) lists a piece's flags.",
   kitList: "kit_spec with no name",
@@ -348,6 +354,10 @@ export function repairOps(input) {
   if (list && !Array.isArray(list) && typeof list === "object") list = [list];
   if (!Array.isArray(list)) return { ops: [], notes, error: "ops must be a list of op objects" };
   const ops = [];
+  const errors = [];
+  const fail = (text) => {
+    errors.push(text);
+  };
   list.forEach((raw, i) => {
     if (!raw || typeof raw !== "object") return;
     const o = { ...raw };
@@ -356,6 +366,11 @@ export function repairOps(input) {
     if (o.op === "set-style" || o.op === "set") o.op = "set-prop";
     if (o.op === "add" || o.op === "append") o.op = "insert";
     if (o.path && !o.at) o.at = o.path;
+    // A remove or move with its address in `value` (a real run's spelling):
+    // take it from there. Without one it is refused — defaulting to the root
+    // made a one-card remove a request to delete the screen.
+    if (o.at == null && (o.op === "remove" || o.op === "move") && /^0(\/\d+)*$/.test(String(o.value || ""))) o.at = o.value;
+    if (o.at == null && (o.op === "remove" || o.op === "move")) return fail(`op ${i}: ${o.op} needs "at", the address of the node`);
     o.at = String(o.at ?? "0").replace(/^\/+|\/+$/g, "") || "0";
     if (o.op === "set-prop") {
       const name = kebab(o.prop || o.name || o.property || "");
@@ -397,9 +412,8 @@ export function repairOps(input) {
         node = { tag: o.tag || "div", id: o.id, text: o.text, props: o.props, children: o.children };
         if (o.children || o.text != null || o.props) notes.push(`op ${i}: insert fields moved into node`);
       }
-      if (!node) {
-        notes.push(`op ${i}: insert without a node skipped`);
-        return;
+      if (!node || typeof node !== "object" || (!node.tag && !node.type && node.text == null && !node.children)) {
+        return fail(`op ${i}: insert has no node — send the subtree as JSON text in "node": {"tag":"div","props":{…},"children":[…]}`);
       }
       const index = Number.isInteger(o.index) ? o.index : Number.isFinite(Number(o.index)) ? Number(o.index) : -1;
       const built = repairNode(node, notes, `op ${i}`);
@@ -411,7 +425,7 @@ export function repairOps(input) {
       return;
     }
     if (o.op === "set-css") {
-      ops.push({ op: "set-css", at: "0", value: String(o.value ?? o.css ?? "") });
+      ops.push({ op: "set-css", at: "0", value: String(o.value ?? o.css ?? ""), replace: o.replace === true || o.replace === "true" });
       return;
     }
     if (o.op === "set-text" || o.op === "set-id") {
@@ -424,7 +438,54 @@ export function repairOps(input) {
     }
     notes.push(`op ${i}: unknown op "${raw.op}" skipped — ops are ${OPS.join(", ")}`);
   });
+  if (errors.length) return { ops: [], notes, error: errors.join("; ") };
   return { ops, notes };
+}
+
+// --- the stylesheet, merged ---------------------------------------------------
+//
+// `set-css` in the document is the whole sheet. A model restyling two rules
+// sent only those two — and the kit's rules went with the rest: the switch's
+// state rules gone, the track painted "on" for good. For Gemini a set-css
+// MERGES by selector unless the op says `replace: true`.
+
+export function cssRules(css) {
+  const out = [];
+  const text = String(css || "");
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf("{", i);
+    if (open < 0) break;
+    let depth = 1;
+    let j = open + 1;
+    while (j < text.length && depth > 0) {
+      if (text[j] === "{") depth += 1;
+      else if (text[j] === "}") depth -= 1;
+      j += 1;
+    }
+    const head = text.slice(i, open).trim();
+    if (head) out.push({ key: head.replace(/\s+/g, " "), text: `${head} ${text.slice(open, j).trim()}` });
+    i = j;
+  }
+  return out;
+}
+
+export function mergeCss(old, add) {
+  const rules = cssRules(old);
+  const index = new Map(rules.map((r, k) => [r.key, k]));
+  let changed = 0;
+  let added = 0;
+  for (const r of cssRules(add)) {
+    if (index.has(r.key)) {
+      rules[index.get(r.key)] = r;
+      changed += 1;
+    } else {
+      index.set(r.key, rules.length);
+      rules.push(r);
+      added += 1;
+    }
+  }
+  return { css: `${rules.map((r) => r.text).join("\n")}\n`, changed, added, kept: rules.length - changed - added };
 }
 
 // An insert without an index goes at the end, which EVG spells as the
@@ -541,6 +602,18 @@ function applyBatch(workspace, file, ops) {
   const doc = readJson(docPath);
   if (!doc) return { ok: false, error: `${file} is not a document` };
   for (const o of ops) if (o.op === "insert" && o.index < 0) o.index = childCount(doc, o.at);
+  let sheet = String(doc.css || "");
+  const cssNotes = [];
+  for (const o of ops) {
+    if (o.op !== "set-css") continue;
+    if (!o.replace) {
+      const m = mergeCss(sheet, o.value);
+      o.value = m.css;
+      cssNotes.push(`set-css merged: ${m.changed} rule(s) replaced, ${m.added} added, ${m.kept} kept`);
+    }
+    delete o.replace;
+    sheet = o.value;
+  }
   const tmp = path.join(workspace, ".gemini-ops.json");
   fs.writeFileSync(tmp, JSON.stringify({ ops }));
   const r = node(workspace, [agentJs(workspace), "patch", file, tmp]);
@@ -553,6 +626,7 @@ function applyBatch(workspace, file, ops) {
   if (j.atDefault) out.atDefault = "some values equal the tag default and vanish from the file — they still applied";
   if (j.layout) out.layout = j.layout;
   if (!j.ok) out.hint = "Nothing was applied. Fix the rejected op and send the batch again.";
+  if (cssNotes.length) out.css = cssNotes.join("; ");
   return out;
 }
 

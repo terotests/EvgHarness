@@ -8,8 +8,8 @@
  * scripted recipe that needs no model at all.
  */
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { warnMissing, buildTools, detectAgents, ensureDeps, liveDir, log, pickAgent } from "./lib.mjs";
+import { spawn, spawnSync } from "node:child_process";
+import { ownsClone, warnMissing, buildTools, detectAgents, ensureDeps, liveDir, log, pickAgent } from "./lib.mjs";
 
 const arg = (name) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -20,7 +20,20 @@ let ranger;
 try {
   ({ ranger } = ensureDeps());
   buildTools(ranger, { force: process.argv.includes("--rebuild") || process.argv.includes("--update") });
-  await warnMissing(ranger);
+  // The harness's own clone is updated rather than only warned about: a
+  // stale .deps/Ranger was the whole reason a real run's titles were
+  // invisible. A checkout somebody pointed us at is theirs to update.
+  if ((await warnMissing(ranger)) && ownsClone(ranger) && !process.env.EVG_HARNESS_UPDATED) {
+    log("update .deps/Ranger now, then start again");
+    const up = spawnSync(process.execPath, [path.join(liveDir, "..", "scripts", "setup.mjs"), "--update"], { stdio: "inherit" });
+    if (up.status === 0) {
+      const again = spawnSync(process.execPath, process.argv.slice(1), {
+        stdio: "inherit",
+        env: { ...process.env, EVG_HARNESS_UPDATED: "1" },
+      });
+      process.exit(again.status ?? 1);
+    }
+  }
 } catch (e) {
   log(`setup failed: ${e.message}`);
   process.exit(1);

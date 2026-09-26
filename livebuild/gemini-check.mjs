@@ -14,7 +14,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { runTask, resetSession, sessionDir, snapshotSession, undoSession } from "./agents.mjs";
-import { geminiLoop, normalizeFlags, repairOps, toolDeclarations, wipeCheck } from "./gemini-agent.mjs";
+import { geminiLoop, mergeCss, normalizeFlags, repairOps, toolDeclarations, wipeCheck } from "./gemini-agent.mjs";
 
 const assert = (ok, what) => {
   if (!ok) throw new Error(what);
@@ -45,6 +45,15 @@ const assert = (ok, what) => {
   assert(JSON.stringify(flags) === JSON.stringify(["--title", "Orders", "--tile", "Revenue|$12k|+8%|$", "--bar", "M|55", "--bar", "T|80"]), `flags: ${flags}`);
   assert(toolDeclarations("json").every((d) => d.parametersJsonSchema), "json tools use parametersJsonSchema");
   assert(toolDeclarations("string").find((d) => d.name === "apply_ops").parameters.properties.ops_json, "string tools carry ops_json");
+  const asText = repairOps([{ op: "insert", at: "0", node: '{"tag":"div","props":{"class-name":"card"},"children":[{"tag":"span","text":"Hi"}]}' }]);
+  assert(asText.ops[0].node.children[0].text === "Hi", "a node sent as JSON text is the subtree");
+  assert(/has no node/.test(repairOps([{ op: "insert", at: "0", node: {} }]).error || ""), "an empty node is refused, not inserted as an empty div");
+  assert(repairOps([{ op: "remove", value: "0/2" }]).ops[0].at === "0/2", "a remove with its address in value removes that node");
+  assert(/needs "at"/.test(repairOps([{ op: "remove" }]).error || ""), "a remove without an address is refused, not a remove of the root");
+  const m = mergeCss(".ui-switch-track { background-color: #ccc }\n.ui-switch-track-state-checked { background-color: #0a0 }\n@media (max-width: 400px) { .a { gap: 4px } }", ".ui-switch-track { background-color: #ddd }\n.card { gap: 8px }");
+  assert(m.changed === 1 && m.added === 1 && m.kept === 2 && /state-checked/.test(m.css) && /#ddd/.test(m.css) && /@media/.test(m.css), `css merge: ${JSON.stringify(m)}`);
+  assert(toolDeclarations("json").find((d) => d.name === "apply_ops").parametersJsonSchema.properties.ops.items.properties.node.type === "string", "node is declared as a string");
+  console.log("  shapes      node as JSON text; empty node and address-less remove refused; set-css merges by selector");
   const { quickStart } = await import("./guide.mjs");
   const bare = quickStart(undefined, undefined, { pieces: ["row", "card"], theme: false });
   assert(!/\| tiles \|/.test(bare) && /\| card \|/.test(bare), "the kit table lists only the pieces the kit has");

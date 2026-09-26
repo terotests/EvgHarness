@@ -152,10 +152,13 @@ export async function warnMissing(ranger) {
   const lines = [];
   if (want.length) lines.push(`the UI kit has no ${want.join(", ")}`);
   if (!caps.theme) lines.push("a document's theme is ignored (kit pieces stay light on a dark screen)");
-  if (!lines.length) return;
+  if (!lines.length) return false;
   log(`note   this Ranger checkout is older than the harness: ${lines.join("; ")}.`);
   log(`       ${ranger.startsWith(depsDir) ? "npm run setup -- --update" : "update your Ranger checkout (git pull)"} fixes it. Agents are told what is missing meanwhile.`);
+  return true;
 }
+
+export const ownsClone = (dir) => isOurs(dir);
 
 export function buildTools(ranger, { force = false } = {}) {
   for (const tool of TOOLS) {
