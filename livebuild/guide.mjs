@@ -169,6 +169,14 @@ have, build from divs and spans — but never a fake control.
 - Every pressable thing gets an \`id\`: tabs \`nav.<screen>\`, buttons and
   rows \`<verb>.<thing>\` (\`open.invoice\`, \`toggle.wifi\`). An app is made
   from these ids later; a nameless button can never be wired.
+- Every text reads on what is behind it: 4.5:1 contrast, 3:1 for text of
+  24px and up. \`measure\` reports \`text unreadable\` under 3:1 as a finding
+  and weaker contrast under \`contrast\`. Changing light to dark (or back)
+  is one batch: the page, the cards and the text together — or the root's
+  theme — never the text first.
+- In EVG any \`top\` / \`left\` / \`right\` / \`bottom\` makes a node absolute: it
+  leaves the flow and stops taking space. There is no relative offset; nudge
+  with margins, align with flex.
 - Icons are monochrome and take the palette: a symbol in the text's colour
   (\`← → › ✓ ✕ ⌂ ⌕ ☰ ⚙ ★ ♥ ⚑ ⏻ ↻ ⋯\`), or an SVG path node coloured with
   \`fill\`: \`{"tag":"path","props":{"width":"20px","height":"20px","view-box":"0 0 24 24","d":"M3 11 L12 3 L21 11 L21 21 L3 21 Z","fill":"#94a3b8"}}\`.

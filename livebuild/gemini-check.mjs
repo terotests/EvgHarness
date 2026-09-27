@@ -14,7 +14,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { runTask, resetSession, sessionDir, snapshotSession, undoSession } from "./agents.mjs";
-import { geminiLoop, mergeCss, normalizeFlags, repairOps, toolDeclarations, wipeCheck } from "./gemini-agent.mjs";
+import { flowCss, geminiLoop, mergeCss, normalizeFlags, repairOps, toolDeclarations, wipeCheck } from "./gemini-agent.mjs";
+import { contrastFindings } from "./contrast.mjs";
+import { designView } from "./designview.mjs";
 
 const assert = (ok, what) => {
   if (!ok) throw new Error(what);
@@ -53,7 +55,19 @@ const assert = (ok, what) => {
   const m = mergeCss(".ui-switch-track { background-color: #ccc }\n.ui-switch-track-state-checked { background-color: #0a0 }\n@media (max-width: 400px) { .a { gap: 4px } }", ".ui-switch-track { background-color: #ddd }\n.card { gap: 8px }");
   assert(m.changed === 1 && m.added === 1 && m.kept === 2 && /state-checked/.test(m.css) && /#ddd/.test(m.css) && /@media/.test(m.css), `css merge: ${JSON.stringify(m)}`);
   assert(toolDeclarations("json").find((d) => d.name === "apply_ops").parametersJsonSchema.properties.ops.items.properties.node.type === "string", "node is declared as a string");
+  const flowNotes = [];
+  const flowed = flowCss(".ui-row-title { display: block; position: relative; top: 0px; font-size: 16px }\n.fab { position: absolute; bottom: 16px }", flowNotes);
+  assert(!/top:|position: relative/.test(flowed.split("\n")[0]) && /font-size: 16px/.test(flowed) && /bottom: 16px/.test(flowed) && flowNotes.length === 1, `flowCss: ${flowed}`);
+  const cf = contrastFindings({ cmds: [
+    { k: 0, x: 0, y: 0, w: 390, h: 100, c: [255, 255, 255, 1] },
+    { k: 3, x: 10, y: 10, w: 80, h: 20, c: [255, 255, 255, 1], text: "Hei Maailma!", size: 16 },
+    { k: 3, x: 10, y: 40, w: 80, h: 20, c: [0, 0, 0, 1], text: "Readable", size: 16 },
+  ] });
+  assert(cf.length === 1 && cf[0].unreadable && /Hei Maailma/.test(cf[0].text), `contrast: ${JSON.stringify(cf)}`);
+  const view = designView(JSON.stringify({ evg: 1, root: { tag: "div", children: [{ tag: "div", checked: 2, props: { "class-name": "ui-switch ui-switch-state-{live}" }, children: [{ tag: "div", props: { "class-name": "ui-switch-track-state-{live}" } }] }] } }));
+  assert(view && (view.match(/state-checked/g) || []).length === 2 && !/\{live\}/.test(view), `designView: ${view}`);
   console.log("  shapes      node as JSON text; empty node and address-less remove refused; set-css merges by selector");
+  console.log("  view        relative insets dropped; unreadable text found; a bound switch drawn as it was asked for");
   const { quickStart } = await import("./guide.mjs");
   const bare = quickStart(undefined, undefined, { pieces: ["row", "card"], theme: false });
   assert(!/\| tiles \|/.test(bare) && /\| card \|/.test(bare), "the kit table lists only the pieces the kit has");

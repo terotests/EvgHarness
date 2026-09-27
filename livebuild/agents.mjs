@@ -22,6 +22,9 @@ import { parseRestyle, restyleEnv } from "./restyle.mjs";
 import { ERAZER_TXT, PICTURE_FILES, readScreenshot } from "./picture.mjs";
 import { SHELL_TOOLS, quickStart, viewOf } from "./guide.mjs";
 import { capabilities } from "./capabilities.mjs";
+import { withContrast } from "./contrast.mjs";
+import { designView } from "./designview.mjs";
+export { designView };
 import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_HISTORY,
@@ -284,18 +287,35 @@ function frameFile(docPath, onLine, { quiet = false, view = null } = {}) {
   const size = [];
   if (view && view.width > 0) size.push(`--width=${Math.round(view.width)}`);
   if (view && view.height > 0) size.push(`--height=${Math.round(view.height)}`);
-  const r = spawnSync("node", [liveBin, "frame", docPath, ...size], {
+  let target = docPath;
+  try {
+    const resolved = designView(fs.readFileSync(docPath, "utf8"));
+    if (resolved) {
+      target = path.join(path.dirname(docPath), ".design-view.evg.json");
+      fs.writeFileSync(target, resolved);
+    }
+  } catch {
+    /* frame the document as it is */
+  }
+  const r = spawnSync("node", [liveBin, "frame", target, ...size], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
   });
   const out = `${r.stdout || ""}`;
+  let list = null;
   for (const line of out.split("\n")) {
     if (!line.trim()) continue;
     try {
       const obj = JSON.parse(line);
       if (obj.t === "session" || obj.t === "done") continue;
       if (quiet && obj.t === "error") continue;
+      if (obj.t === "frame") list = obj.list;
+      // Colour is the one defect the layout numbers cannot see.
+      if (obj.t === "measure" && list) {
+        onLine(ndjson(withContrast(obj, list)));
+        continue;
+      }
       onLine(line);
     } catch {
       /* ignore compiler chatter */

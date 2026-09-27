@@ -42,6 +42,8 @@ import { quickStart, viewOf } from "./guide.mjs";
 import { root } from "./paths.mjs";
 import { ERAZER_TXT } from "./picture.mjs";
 import { capabilities } from "./capabilities.mjs";
+import { contrastOf } from "./contrast.mjs";
+import { designView } from "./designview.mjs";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 export const DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -335,6 +337,29 @@ function repairNode(node, notes, where) {
   return out;
 }
 
+// In EVG any top / left / right / bottom takes a node OUT of the flow — it
+// is absolutely positioned — and `position: relative` does not bring it back.
+// A real run wrote `.ui-row-title { position: relative; top: 0px }` to
+// "reset" a title, and the title stopped taking space: the subtitle drew on
+// top of it. A rule that says relative or static means "in the flow", so its
+// insets go.
+const INSET = /^(top|left|right|bottom)$/;
+
+export function flowCss(css, notes) {
+  return String(css).replace(/([^{}]+)\{([^{}]*)\}/g, (all, sel, body) => {
+    const decls = body.split(";").map((d) => d.trim()).filter(Boolean);
+    const pos = decls.find((d) => /^position\s*:/.test(d));
+    if (!pos || !/relative|static|sticky/.test(pos)) return all;
+    const kept = decls.filter((d) => {
+      const name = d.split(":")[0].trim();
+      return !(INSET.test(name) || name === "position");
+    });
+    if (kept.length === decls.length) return all;
+    notes.push(`${sel.trim()}: position ${pos.split(":")[1].trim()} and its insets dropped — in EVG an inset makes a node absolute`);
+    return `${sel.trim()} { ${kept.join("; ")} }`;
+  });
+}
+
 /**
  * The batch as EVG takes it. Returns { ops, notes }: the repaired ops, and a
  * line for each repair so the model learns the spelling rather than being
@@ -377,6 +402,10 @@ export function repairOps(input) {
       if (name === "id") {
         ops.push({ op: "set-id", at: o.at, value: String(o.value) });
         notes.push(`op ${i}: set-prop id → set-id`);
+        return;
+      }
+      if (name === "position" && /relative|static|sticky/.test(String(o.value))) {
+        notes.push(`op ${i}: position ${o.value} dropped — a node is in the flow unless it has insets`);
         return;
       }
       if (name === "text") {
@@ -425,7 +454,7 @@ export function repairOps(input) {
       return;
     }
     if (o.op === "set-css") {
-      ops.push({ op: "set-css", at: "0", value: String(o.value ?? o.css ?? ""), replace: o.replace === true || o.replace === "true" });
+      ops.push({ op: "set-css", at: "0", value: flowCss(String(o.value ?? o.css ?? ""), notes), replace: o.replace === true || o.replace === "true" });
       return;
     }
     if (o.op === "set-text" || o.op === "set-id") {
@@ -635,7 +664,38 @@ function measureDoc(workspace, file, view, { at, boxes } = {}) {
   if (boxes) args.push("--boxes");
   if (at) args.push(`--at=${at}`);
   const r = node(workspace, args);
-  return firstJson(r.stdout) || { error: clip(r.stderr || r.stdout, 1500) };
+  const m = firstJson(r.stdout) || { error: clip(r.stderr || r.stdout, 1500) };
+  return addContrast(workspace, file, view, m);
+}
+
+// The layout numbers do not see colour; the page does. Unreadable text
+// (under 3:1) is a finding like an overlap, weaker contrast a note.
+function textContrast(workspace, file, view) {
+  const abs = path.join(workspace, file);
+  let target = abs;
+  try {
+    const resolved = designView(fs.readFileSync(abs, "utf8"));
+    if (resolved) {
+      target = path.join(workspace, ".gemini-view.evg.json");
+      fs.writeFileSync(target, resolved);
+    }
+  } catch {
+    /* the document as it is */
+  }
+  return contrastOf(target, view);
+}
+
+function addContrast(workspace, file, view, m) {
+  if (!m || m.error) return m;
+  const found = textContrast(workspace, file, view);
+  const bad = found.filter((f) => f.unreadable).map((f) => `text unreadable: ${f.text}`);
+  const low = found.filter((f) => !f.unreadable).map((f) => f.text);
+  if (bad.length) {
+    m.findings = [...(m.findings || []), ...bad];
+    m.count = (m.count || 0) + bad.length;
+  }
+  if (low.length) m.contrast = low;
+  return m;
 }
 
 function outlineDoc(workspace, file, { at, depth } = {}) {
@@ -732,7 +792,10 @@ export function executeTool(workspace, name, args, state) {
         const wipe = wipeCheck(workspace, file, ops, args.replace === true, state.task);
         if (wipe) return { ok: false, applied: 0, ...wipe };
         const res = applyBatch(workspace, file, ops);
-        if (res.ok) res.outline = outlineDoc(workspace, file).outline;
+        if (res.ok) {
+          res.outline = outlineDoc(workspace, file).outline;
+          if (res.layout) addContrast(workspace, file, state.view, res.layout);
+        }
         if (notes.length) res.repaired = notes;
         return res;
       }
